@@ -88,18 +88,18 @@ class LedgerService:
             ).first()
             if existing:
                 return existing, True
+        else:
+            # 2. Heuristic duplicate check when no external_id is provided (e.g. double-click / network retry)
+            window_start = datetime.now(timezone.utc) - timedelta(seconds=settings.DUPLICATE_WINDOW_SECONDS)
+            dup_candidate = db.query(LedgerTransaction).filter(
+                LedgerTransaction.tenant_id == tenant_id,
+                LedgerTransaction.client_ref == tx_data.client_ref,
+                LedgerTransaction.content_hash == content_hash,
+                LedgerTransaction.created_at >= window_start,
+            ).first()
 
-        # 2. Heuristic duplicate check (exact same parameters within duplicate window)
-        window_start = datetime.now(timezone.utc) - timedelta(seconds=settings.DUPLICATE_WINDOW_SECONDS)
-        dup_candidate = db.query(LedgerTransaction).filter(
-            LedgerTransaction.tenant_id == tenant_id,
-            LedgerTransaction.client_ref == tx_data.client_ref,
-            LedgerTransaction.content_hash == content_hash,
-            LedgerTransaction.created_at >= window_start,
-        ).first()
-
-        if dup_candidate:
-            return dup_candidate, True
+            if dup_candidate:
+                return dup_candidate, True
 
         # 3. Determine Direction
         if tx_data.type == TransactionType.DEPOSIT:
@@ -117,7 +117,7 @@ class LedgerService:
             current_balance, _ = LedgerService.get_client_balance(db, tenant_id, tx_data.client_ref, currency)
             if current_balance < tx_data.amount:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=422,
                     detail=f"Insufficient funds for client '{tx_data.client_ref}'. Current balance: {current_balance:.2f} {currency}, requested: {tx_data.amount:.2f} {currency}",
                 )
 
@@ -158,7 +158,6 @@ class LedgerService:
             },
         )
         db.commit()
-        db.refresh(tx)
         return tx, False
 
     @staticmethod
@@ -329,8 +328,6 @@ class LedgerService:
                 },
             )
             db.commit()
-            for tx in accepted:
-                db.refresh(tx)
 
         return accepted, errors, duplicate_count
 
@@ -354,7 +351,7 @@ class LedgerService:
         )
         if sender_balance < amount:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail=f"Insufficient funds in sender account '{transfer_data.from_client_ref}'. Available: {sender_balance:.2f} {currency}, required: {amount:.2f} {currency}",
             )
 
@@ -418,8 +415,6 @@ class LedgerService:
         )
 
         db.commit()
-        db.refresh(tx_out)
-        db.refresh(tx_in)
         return tx_out, tx_in
 
     @staticmethod
@@ -472,7 +467,7 @@ class LedgerService:
             )
             if current_balance < original.amount:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=422,
                     detail=f"Cannot reverse transaction: client balance ({current_balance:.2f} {original.currency}) is insufficient to deduct {original.amount:.2f} {original.currency}.",
                 )
 
@@ -520,7 +515,6 @@ class LedgerService:
         )
 
         db.commit()
-        db.refresh(reversal_tx)
         return reversal_tx
 
     @staticmethod
